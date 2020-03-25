@@ -1,29 +1,38 @@
-// regs save fake 32-bit address!!!!!
+﻿// regs save fake 32-bit address!!!!!
 
 #include <QCoreApplication>
 #include <iostream>
 #include <string>
-#include <bitset>
-#include <fstream>
-#include <limits.h>
+#include <sstream>
 #include <cstdlib>
 #include <iomanip>
+#include <limits.h>
+#include <cmath>
 #include "mips.h"
 using namespace std;
 
-int ln_idx = 0;
+uint32_t curr_code;
+uint64_t ln_idx = 0;
 ifstream f;
-unordered_map<string, int> labels;
+unordered_map<string, uint64_t> labels;
 
-const string TITLE = "MIPS SIMULATOR for CSC3050 Assignment 2";
-const string IN_PROMPT = "Please specify the absolute path of input file (e.g. /usr/local/input.asm):";
+const string TITLE = "\
+        __  __ _____ _____   _____ _            \n\
+       |  \\/  |_   _|  __ \\ / ____(_)           \n\
+       | \\  / | | | | |__) | (___  _ _ __ ___   \n\
+       | |\\/| | | | |  ___/ \\___ \\| | '_ ` _ \\  \n\
+       | |  | |_| |_| |     ____) | | | | | | |  © Jamie Chen\n\
+       |_|  |_|_____|_|    |_____/|_|_| |_| |_|  for CSC3050 Assignment 2";
+const string IN_PROMPT =
+    "Please enter the absolute path of the input file (e.g. "
+    "/usr/local/input.asm):";
 const string NUMS = "0123456789";
 const string WS = " \t";
-const vector<string> REG_LIT = {
-    "$ze", "$at", "$v0","$v1","$a0","$a1", "$a2","$a3","$t0",  "$t1",
-    "$t2","$t3","$t4","$t5", "$t6","$t7", "$s0", "$s1", "$s2","$s3", "$s4","$s5",
-    "$s6","$s7","$t8","$t9","$k0","$k1","$gp","$sp","$fp","$ra","$hi","$lo"
-};
+const vector<string> REG_LIT = {"$ze", "$at", "$v0", "$v1", "$a0", "$a1", "$a2",
+                                "$a3", "$t0", "$t1", "$t2", "$t3", "$t4", "$t5",
+                                "$t6", "$t7", "$s0", "$s1", "$s2", "$s3", "$s4",
+                                "$s5", "$s6", "$s7", "$t8", "$t9", "$k0", "$k1",
+                                "$gp", "$sp", "$fp", "$ra", "$hi", "$lo"};
 const unordered_map<string, uint8_t> REGS = {
     {"$zero", 0}, {"$at", 1},  {"$v0", 2},  {"$v1", 3},  {"$a0", 4},
     {"$a1", 5},   {"$a2", 6},  {"$a3", 7},  {"$t0", 8},  {"$t1", 9},
@@ -41,18 +50,13 @@ const unordered_map<string, uint8_t> REGS = {
  *  000000   5       5       5       5       6
  *  ------------------------------------------------------------------
  */
-uint32_t last(int n)
-{
-    return (1 << n) - 1;
-}
-
 
 const unordered_map<string, uint8_t> R_DST = {
     // instr rd, rs, rt
-    {"add", 0b100000}, {"addu", 0b100001}, {"and", 0b100100},
-    {"nor", 0b100111},  {"or", 0b100101},
-    {"sub", 0b100010}, {"subu", 0b100011}, {"xor", 0b100110},
-    {"slt", 0b101010}, {"sltu", 0b101011},
+    {"add", 0b100000},  {"addu", 0b100001}, {"and", 0b100100},
+    {"nor", 0b100111},  {"or", 0b100101},   {"sub", 0b100010},
+    {"subu", 0b100011}, {"xor", 0b100110},  {"slt", 0b101010},
+    {"sltu", 0b101011},
 };
 
 const unordered_map<string, uint8_t> R_SLV = {
@@ -72,10 +76,9 @@ const unordered_map<string, uint8_t> R_DTS = {
 const unordered_map<string, uint8_t> R_ST = {
     // instr rs, rt
     {"div", 0b011010},   {"divu", 0b011011}, {"mult", 0b011000},
-    {"multu", 0b011001},
-    {"teq", 0x34},
-    {"tne", 0x36},       {"tge", 0x30},      {"tgeu", 0x31},
-    {"tlt", 0x32},       {"tltu", 0x33},
+    {"multu", 0b011001}, {"teq", 0x34},      {"tne", 0x36},
+    {"tge", 0x30},       {"tgeu", 0x31},     {"tlt", 0x32},
+    {"tltu", 0x33},
 };
 
 const unordered_map<string, uint8_t> R_D = {
@@ -111,10 +114,10 @@ const unordered_map<string, uint8_t> I_LS = {
     // load and save
     // instr rt, imm(rs)
     // {"instr", op}
-    {"lb", 0b100000}, {"lbu", 0b100100},  {"lh", 0b100001}, {"lhu", 0b100101},
-    {"lw", 0b100011}, {"lwc1", 0b110001}, {"lwl", 0x22},    {"lwr", 0x26},
-    {"ll", 0x30},     {"sb", 0b101000},   {"sh", 0b101001}, {"sw", 0b101011},
-    {"swl", 0x2a},    {"swr", 0x2e},      {"sc", 0x38}};
+    {"lb", 0b100000}, {"lbu", 0b100100}, {"lh", 0b100001}, {"lhu", 0b100101},
+    {"lw", 0b100011}, {"lwl", 0x22},     {"lwr", 0x26},    {"ll", 0x30},
+    {"sb", 0b101000}, {"sh", 0b101001},  {"sw", 0b101011}, {"swl", 0x2a},
+    {"swr", 0x2e},    {"sc", 0x38}};
 
 const unordered_map<string, uint8_t> I_B_STL = {
     // instr rs, rt, label
@@ -153,67 +156,122 @@ const unordered_map<string, uint8_t> I_T = {
 
 const unordered_map<string, uint8_t> J = {{"j", 2}, {"jal", 3}};
 
-const int SIM_SIZE = 0x600000; // size of simulation (6 MB)
-const int TEXT_SIZE = 0x100000; // size of text section (1 MB)
-const int RESERVED_SIZE = 0x40000; // size of reserved memory
+const uint32_t SIM_SIZE = 0x600000;      // size of simulation (6 MB)
+const uint32_t TEXT_SIZE = 0x100000;     // size of text section (1 MB)
+const uint32_t RESERVED_SIZE = 0x400000;  // size of reserved memory
+const uint32_t REG_DEFAULT = 0;
 
-uint32_t* REG_ptr = (uint32_t*) malloc(SIM_SIZE); // simulated registers in memory
-char* BASE = (char*)REG_ptr + REGS.size() * sizeof(int); // base pointer, start of text section
-char* DATA = BASE + TEXT_SIZE; // data pointer, start of data section
-char* STACK = DATA + (SIM_SIZE - TEXT_SIZE); // stack pointer, highest memory
-uint32_t* PC = (uint32_t*)BASE; // program counter
+uint32_t* REG = (uint32_t*)malloc(SIM_SIZE);          // pointer at start of simulated registers
+char* BASE = (char*)REG + REGS.size() * sizeof(int);  // base pointer, start of text section
+char* DATA = BASE + TEXT_SIZE;                            // data pointer, start of data section
+char* STACK = DATA + (SIM_SIZE - TEXT_SIZE);              // stack pointer, at highest memory addr
+uint32_t* PC = (uint32_t*)BASE;                           // program counter
 
-// true address mapped to fake 32-bit
-uint32_t addr_32(uint64_t true_addr, uint64_t base = (uintptr_t) BASE, uint32_t reserved = RESERVED_SIZE) {return true_addr - base + reserved;}
-
-// fake 32-bit mapped back to true address
-uint64_t addr_64(uint32_t fake, uint64_t base = (uintptr_t) BASE, uint32_t reserved = RESERVED_SIZE) {return (fake + base - reserved);}
-
-const uint32_t REG_DEFAULT = addr_32((intptr_t)(DATA - sizeof(int))); // default value of registers
-
-
-// returns the VALUE at i-th register, default Type=int
-template <class T = int>
-T reg_val(int idx, uint32_t* reg_ptr = REG_ptr) {
-    if (idx < 32){
-    uint64_t true_addr = addr_64(reg_ptr[idx]);
-    return *(T*)true_addr;}
-    else {
-        reg_ptr += idx;
-        return *(T*)reg_ptr;
-    }
+// print formatted title
+void print_title(string s, int len, char fill) {
+  int fillw,
+      halfLen = len / 2,
+      halfSlen = s.length() / 2;
+  fillw = halfLen - halfSlen;
+  cout << setw(s.length() + fillw) << right << setfill(fill) << s;
+  cout << setw(fillw - 1) << setfill(fill) << fill << endl;
 }
 
-// returns cotent (default Type int) stored at pointer
-template <class T = int>
-T at_pointer(void* pt) {return *(T*)pt;}
+// map real address to fake 32-bit
+uint32_t addr_32(uint64_t true_addr, uint64_t base = (uintptr_t)BASE,
+                 uint32_t reserved = RESERVED_SIZE) {
+  return true_addr - base + reserved;
+}
 
-// store content (default Type int) at a pointer
+// fake 32-bit mapped back to true address
+uint64_t addr_64(uint32_t fake, uint64_t base = (uintptr_t)BASE,
+                 uint32_t reserved = RESERVED_SIZE) {
+  return (fake + base - reserved);
+}
+
+// returns last-n-bits masking
+uint32_t last(int n) { return (1 << n) - 1; }
+
+// returns the VALUE in i-th register, default Type=int
 template <class T = int>
-T* store_at_ptr(char* &p, T content = 0){
-    T* pt = (T*) p;
-    *pt = content;
-    p += sizeof(T);
+T reg_val(int idx, uint32_t* pt = REG) {
+  if (idx < 32) {
+    uint64_t true_addr = addr_64(pt[idx]);
+    return *(T*)true_addr;
+  } else {
+    return *(T*)(pt + idx);
+  }
+}
+
+// compute the size of a data in blocks of 4-bytes
+size_t blockwise(size_t size)
+{
+    return ((size - 1)/4 + 1) * 4;
+}
+
+// display bytes in memory
+void print_bytes(int num_of_bytes, char* ptr = BASE) {
+  print_title("MEMORY");
+  for (int i = 0; i < num_of_bytes; i++) {
+    if (i % 32 == 0) {
+      uint32_t x = addr_32((intptr_t)ptr);
+      cout << "0x" << hex << (x + i) << "\t\t";
+    }
+    printf("%02hhX ", ptr[i]);
+    if (i % 4 == 3) cout << '\t';
+    if (i % 32 == 31) cout << '\n';
+  }
+  cout << '\n';
+  print_title();
+}
+
+// store content using a pointer, increment pointer block-wise (size = 4 bytes).
+// return a new pointer of the corresponding type to the saved content.
+template <class T = int> // store a single value
+T* store_at_ptr(char*& p, T content = (T)0) {
+  T* pt = (T*)p;
+  *pt = content;
+  p += blockwise(sizeof (T)); // 1,2,3,4 -> 4; 5,6,7,8 -> 8;...
+  return pt;
+}
+
+// store an array given a vector
+template <class T>
+T* store_at_ptr(char*& p, vector<T> content){
+
+  T *pt = (T*)p,
+    *saving_p = pt;
+  size_t size = sizeof (T) * content.size();
+
+  for (T element: content){
+      *saving_p = element; ++saving_p;
+  }
+    p += blockwise(size);
     return pt;
 }
 
-// initialize registers
-void init_reg(uint32_t* reg_ptr = REG_ptr)
-{
-    for (size_t i = 0; i < REGS.size(); i++)
-    {
-        reg_ptr[i] = REG_DEFAULT;
-    }
+// store a string at pointer, from given vector<char>
+char* store_string_at_ptr(char*& p, vector<char> content, bool terminator){
+  char *pt = p,
+       *saving_p = p;
+  size_t size = sizeof (char) * (content.size() + terminator);
+
+  for (char c: content){
+      *saving_p = c; ++saving_p;
+  }
+    if (terminator) *saving_p = '\0';
+    p += blockwise(size);
+    return pt;
 }
 
-template<class T = int>
-void set_high(T val, uint32_t* pt = REG_ptr){
-    ((T*)pt)[32] = val;
-}
-
-template<class T = int>
-void set_low(T val, uint32_t* pt = REG_ptr){
-    ((T*)pt)[33] = val;
+// initialize register saved address
+void init_reg(uint32_t* pt = REG) {
+  for (size_t i = 0; i < 32; i++) {
+    pt[i] = REG_DEFAULT;
+  }
+  pt[28] = addr_32((intptr_t)DATA); // $gp
+  pt[29] = addr_32((intptr_t)STACK); // $sp
+  pt[30] = pt[29]; // $fp
 }
 
 /*
@@ -223,11 +281,11 @@ void set_low(T val, uint32_t* pt = REG_ptr){
  * Pops out the first element in my_stack,
  * returns a reference to that element.
  */
-template<class T = string>
-T pop(stack<T> &s){
-    T x = s.top();
-    s.pop();
-    return x;
+template <class T = string>
+T pop(stack<T>& s) {
+  T x = s.top();
+  s.pop();
+  return x;
 }
 
 /*
@@ -236,9 +294,9 @@ T pop(stack<T> &s){
  * ----------------------------------
  * Return the machine code of an R-type instruction.
  */
-int makeR(uint8_t op, uint8_t func, uint8_t rs, uint8_t rt, uint8_t rd,
-          uint8_t shamt) {
-  int R = op << 26;
+uint32_t makeR(uint8_t op, uint8_t func, uint8_t rs, uint8_t rt, uint8_t rd,
+               uint8_t shamt) {
+  uint32_t R = op << 26;
   R |= rs << 21;
   R |= rt << 16;
   R |= rd << 11;
@@ -253,8 +311,8 @@ int makeR(uint8_t op, uint8_t func, uint8_t rs, uint8_t rt, uint8_t rd,
  * ----------------------------------
  * Return the machine code of an I-type instruction.
  */
-int makeI(uint8_t op, uint8_t rs, uint8_t rt, uint16_t imm) {
-  int I = op << 26;
+uint32_t makeI(uint8_t op, uint8_t rs, uint8_t rt, uint16_t imm) {
+  uint32_t I = op << 26;
   I |= rs << 21;
   I |= rt << 16;
   I |= imm;
@@ -267,8 +325,8 @@ int makeI(uint8_t op, uint8_t rs, uint8_t rt, uint16_t imm) {
  * ----------------------------------
  * Return the machine code of a J-type instruction.
  */
-int makeJ(uint8_t op, int ln_num) {
-  int J = op << 26;
+uint32_t makeJ(uint8_t op, uint32_t ln_num) {
+  uint32_t J = op << 26;
   J |= ln_num;
   return J;
 }
@@ -287,38 +345,55 @@ stack<string> break_instr(string instr) {
   bool found_name = 0;
   stack<string> args;
 
-  for (int i = 0; i < int(instr.length()); i++) {
-    char curr = instr[i];
+  if (instr == "syscall")
+    args.push(instr);
+  else {
+    for (int i = 0; i < int(instr.length()); i++) {
+      char curr = instr[i];
 
-    if (!found_name)
-      switch (curr) {
-      case ' ':
-      case '\t':
-        found_name = 1;
-        name = arg;
-        arg = "";
-        break;
-      default:
-        arg += curr;
-      }
+      if (!found_name) switch (curr) {
+          case ' ':
+          case '\t':
+            found_name = 1;
+            name = arg;
+            arg = "";
+            break;
+          default:
+            arg += curr;
+        }
 
-    else {
-      switch (curr) {
-      case ' ':
-      case '\t':
-        break;
-      case ',':
-        args.push(arg);
-        arg = "";
-        break;
-      default:
-        arg += curr;
+      else {
+        switch (curr) {
+          case ' ':
+          case '\t':
+            break;
+          case ',':
+            args.push(arg);
+            arg = "";
+            break;
+          default:
+            arg += curr;
+        }
       }
     }
+    args.push(arg);
+    args.push(name);
   }
-  args.push(arg);
-  args.push(name);
+
   return args;
+}
+
+// break a data declaration instruction into name, type, and content,
+// store them into the input arguments
+void break_data(string data, string& name, string& type, string& content) {
+    int colon, type_beg, type_end, cont_beg;
+    colon = data.find(':');
+    name = data.substr(0,colon);
+    type_beg = data.find_first_not_of(WS,colon+1);
+    type_end = data.find_first_of(WS, type_beg+1) - 1;
+    type = data.substr(type_beg, type_end - type_beg + 1);
+    cont_beg = data.find_first_not_of(WS, type_end + 1);
+    content = data.substr(cont_beg);
 }
 
 /*
@@ -328,24 +403,25 @@ stack<string> break_instr(string instr) {
  * Returns the translated machine code of a
  * one-line instruction (already shrunk.)
  */
-int make(string instruction) {
-
+uint32_t make(string instruction) {
   // finding name of the instruction
   stack<string> instr = break_instr(instruction);
   string name = pop(instr);
 
+  if (name == "syscall") return 0xc;
+
   // R-type -------------------------------------
-
   // jalr rs(, rd = 31)
-  if (name == "jalr") {
+  else if (name == "jalr") {
     uint8_t rd;
-    if (instr.size() == 1)
-      rd = 31; // default rd = 31
-    else
-      rd = REGS.at(pop(instr)); // user input rd
-
+    switch (instr.size()) {
+      case 1:
+        rd = 31;
+        break;  // default rd = 31
+      default:
+        rd = REGS.at(pop(instr));  // user input rd
+    }
     uint8_t rs = REGS.at(pop(instr));
-
     return makeR(0, 9, rs, 0, rd);
   }
 
@@ -355,7 +431,6 @@ int make(string instruction) {
     uint8_t rt = REGS.at(pop(instr));
     uint8_t rs = REGS.at(pop(instr));
     uint8_t rd = REGS.at(pop(instr));
-
     return makeR(0, func, rs, rt, rd);
   }
 
@@ -365,7 +440,6 @@ int make(string instruction) {
     uint8_t rs = REGS.at(pop(instr));
     uint8_t rt = REGS.at(pop(instr));
     uint8_t rd = REGS.at(pop(instr));
-
     return makeR(0, func, rs, rt, rd);
   }
 
@@ -375,17 +449,14 @@ int make(string instruction) {
     uint8_t shamt = stoi(pop(instr));
     uint8_t rt = REGS.at(pop(instr));
     uint8_t rd = REGS.at(pop(instr));
-
     return makeR(0, func, 0, rt, rd, shamt);
   }
-
 
   // R rs, rt
   else if (R_ST.find(name) != R_ST.end()) {
     uint8_t func = R_ST.at(name);
     uint8_t rt = REGS.at(pop(instr));
     uint8_t rs = REGS.at(pop(instr));
-
     return makeR(0, func, rs, rt, 0);
   }
 
@@ -393,7 +464,6 @@ int make(string instruction) {
   else if (R_D.find(name) != R_D.end()) {
     uint8_t func = R_D.at(name);
     uint8_t rd = REGS.at(pop(instr));
-
     return makeR(0, func, 0, 0, rd);
   }
 
@@ -401,7 +471,6 @@ int make(string instruction) {
   else if (R_S.find(name) != R_S.end()) {
     uint8_t func = R_S.at(name);
     uint8_t rs = REGS.at(pop(instr));
-
     return makeR(0, func, rs, 0, 0);
   }
 
@@ -411,7 +480,6 @@ int make(string instruction) {
   else if (name == "lui") {
     uint16_t imm = stoi(pop(instr));
     uint8_t rt = REGS.at(pop(instr));
-
     return makeI(15, 0, rt, imm);
   }
 
@@ -426,31 +494,18 @@ int make(string instruction) {
 
   // I rt, imm(rs)
   else if (I_LS.find(name) != I_LS.end()) {
-    int c = 0;
-    int i = 0;
-    string imm_str, rs_str = "";
-    string imm_rs = pop(instr); // imm_rs == "imm(rs)"
+    string imm_str, rs_str;
+    string imm_rs = pop(instr);  // imm_rs == "imm($rs)"
     uint8_t rt = REGS.at(pop(instr));
     uint8_t op = I_LS.at(name);
 
-    while (1) {
-      char curr = imm_rs[i];
-      if (curr == '(')
-        c += 1;
-      else if (curr == ')')
-        break;
-      else {
-        if (c == 0)
-          imm_str += curr;
-        else
-          rs_str += curr;
-      }
-      i += 1;
-    }
+    size_t left = imm_rs.find('(');
+    size_t right = imm_rs.find(')', left + 4);
 
+    imm_str = imm_rs.substr(0, left);
+    rs_str = imm_rs.substr(left + 1, right - left - 1);
     uint16_t imm = stoi(imm_str);
     uint8_t rs = REGS.at(rs_str);
-
     return makeI(op, rs, rt, imm);
   }
 
@@ -458,16 +513,15 @@ int make(string instruction) {
   else if (I_B_STL.find(name) != I_B_STL.end()) {
     uint16_t imm;
     uint8_t op = I_B_STL.at(name);
-
     string lab_ln = pop(instr);
     uint8_t rt = REGS.at(pop(instr));
     uint8_t rs = REGS.at(pop(instr));
 
     if (lab_ln.find_first_not_of(NUMS) == lab_ln.npos)
-      imm = stoi(lab_ln); // #ln
+      imm = stoi(lab_ln);  // direct branch line number
     else {
-      int label = labels[lab_ln];
-      imm = label - ln_idx - 1; // label
+      uint64_t label = labels[lab_ln];
+      imm = label - ln_idx - 1;  // branch to label
     }
 
     return makeI(op, rs, rt, imm);
@@ -481,10 +535,10 @@ int make(string instruction) {
     uint8_t rs = REGS.at(pop(instr));
 
     if (lab_ln.find_first_not_of(NUMS) == lab_ln.npos)
-      imm = stoi(lab_ln); // #ln
+      imm = stoi(lab_ln);  // #ln
     else {
       int label = labels[lab_ln];
-      imm = label - ln_idx - 1; // label
+      imm = label - ln_idx - 1;  // label
     }
 
     return makeI(op, rs, 0, imm);
@@ -498,11 +552,12 @@ int make(string instruction) {
     uint8_t rs = REGS.at(pop(instr));
 
     if (lab_ln.find_first_not_of(NUMS) == lab_ln.npos)
-      imm = stoi(lab_ln); // #ln
+      imm = stoi(lab_ln);  // #ln
     else {
       int label = labels[lab_ln];
-      imm = label - ln_idx - 1; // label
+      imm = label - ln_idx - 1;  // label
     }
+
     return makeI(1, rs, rt, imm);
   }
 
@@ -518,14 +573,14 @@ int make(string instruction) {
 
   // J label/#ln*4
   else {
-    int addr;
+    uint32_t ln_num;
     uint8_t op = J.at(name);
-    string lab_ln = pop(instr); // label or line number
+    string lab_ln = pop(instr);  // label or line number
     if (lab_ln.find_first_not_of(NUMS) == lab_ln.npos)
-      addr = stoi(lab_ln) / 4; // #ln
+      ln_num = stoi(lab_ln) / 4;  // #ln
     else
-      addr = labels[lab_ln]; // label
-    return makeJ(op, addr);
+      ln_num = labels[lab_ln];  // label
+    return makeJ(op, ln_num);
   }
 }
 
@@ -537,12 +592,11 @@ int make(string instruction) {
  * Store info of label (if any) into a hashmap,
  * remove the label from the instruction.
  */
-void get_label(string &str, unordered_map<string, int> &labs) {
+void get_label(string& str, unordered_map<string, uint64_t>& labs) {
   string label;
-  auto colon = str.find(':');
+  size_t colon = str.find(':');
   if (colon != str.npos) {
     label = str.substr(0, colon);
-
     labs.insert(pair<string, int>(label, ln_idx));
     str = str.substr(colon + 1);
   }
@@ -555,12 +609,10 @@ void get_label(string &str, unordered_map<string, int> &labs) {
  * ----------------------------------
  * Deletes the comments starting with '#' from a string.
  */
-void no_comment(string &str) {
-  auto comm = str.find('#');
-  if (comm != str.npos) // found comment
-  {
+void no_comment(string& str) {
+  size_t comm = str.find('#');
+  if (comm != str.npos)  // found comment
     str = str.substr(0, comm);
-  }
 }
 
 /*
@@ -570,12 +622,12 @@ void no_comment(string &str) {
  * ----------------------------------
  * Strips the whitespaces on the both ends of a string.
  */
-void strip(string &str) {
-  auto start = str.find_first_not_of(WS);
+void strip(string& str) {
+  size_t start = str.find_first_not_of(WS);
   if (start == str.npos)
     str = "";
   else {
-    auto end = str.find_last_not_of(WS);
+    size_t end = str.find_last_not_of(WS);
     str = str.substr(start, end - start + 1);
   }
 }
@@ -586,22 +638,22 @@ void strip(string &str) {
  * ----------------------------------
  * Prompts user for file path, set i/o fstreams ready for scanning
  */
-void get_stream(ifstream &is){
-    string in_path;
-    cout << TITLE << "\n\n";
-    while (1){
+void get_stream(ifstream& is) {
+  string in_path;
+  cout << TITLE << "\n\n";
+  while (1) {
     cout << IN_PROMPT << endl;
 
     //getline(cin, in_path);
-    in_path = "c:/users/chen1/desktop/test.asm";
+    in_path = "c:/users/chen1/desktop/fib.asm";
 
     is.open(in_path);
     if (is.fail()) {
-        cout << "Invalid path! Try again.";
-        continue;
+      cout << "File not found! Please try again.\n";
+      continue;
     }
     break;
-    }
+  }
 }
 
 /*
@@ -611,550 +663,896 @@ void get_stream(ifstream &is){
  * Scans instructions through ifstream,
  * stores them into vector instr.
  */
-void scan(ifstream &is, vector<string> &instr){
-    string curr_ln;
-    // First scanning: read labels and store instructions
-    while (getline(is, curr_ln)) {
-      no_comment(curr_ln);
-      if (curr_ln.find_first_not_of(WS) == curr_ln.npos)
-        continue;
+void scan(ifstream& is, vector<string>& instr, vector<string>& data) {
+  string curr_ln;
+  bool is_data = 1;
+  // First scanning: read labels and store instructions
+  while (getline(is, curr_ln)) {
+    no_comment(curr_ln);
+    if (curr_ln.find_first_not_of(WS) == curr_ln.npos) continue;
+    if (curr_ln.find(".data") != curr_ln.npos) continue;
+    if (curr_ln.find(".text") != curr_ln.npos) {is_data = 0; continue;}
 
-      get_label(curr_ln, labels);  // gets label info and delete the labels
-      strip(curr_ln);      // strips WS to obtain the raw instructions
-      if (curr_ln != "") { // skips label line
-        instr.push_back(curr_ln);
-        ln_idx += 1;
-      }
+    if (is_data) // .data
+    {
+        strip(curr_ln);
+        data.push_back(curr_ln);
     }
+
+    else // .text
+    {
+        get_label(curr_ln, labels);  // gets label info and delete the labels
+        strip(curr_ln);              // strips WS to obtain the raw instructions
+        if (curr_ln != "") {         // skips label line
+          instr.push_back(curr_ln);
+          ++ln_idx;
+    }
+  }
+}
     is.close();
 }
 
-/*
- * Function: mips_to_machine
- * Usage: vector<int> codes = mips_to_machine(instr, ofstream);
- * ----------------------------------
- * Returns a list of machine codes corresponding to the input mips instructions
- */
-vector<int> mips_to_machine(vector<string> &instr)
+// set the value (memory pointed by the address) of a register
+template <class T = int>
+void set_reg_val(int idx, T val, uint32_t* pt = REG) {
+  *(T*)addr_64(pt[idx]) = val;
+}
+
+// display the contents (addresses) stored in a register
+void print_reg_saved_addr(int idx, uint32_t*& ptr = REG) {
+  cout << REG_LIT[idx] << ": 0x" << hex << ptr[idx];
+}
+
+// display the contents (addresses) stored in all registers
+void print_regs_saved_addr(uint32_t*& ptr = REG) {
+  print_title("REGISTERS");
+  for (size_t i = 0; i < REGS.size(); i++) {
+    print_reg_saved_addr(i, ptr);
+    cout << '\t';
+    if (i % 9 == 8) cout << '\n';
+  }
+  cout << '\n';
+  print_title();
+}
+
+void link(uint32_t* pt = REG) {
+  pt[31] = addr_32((intptr_t)(PC + 1));
+}
+
+// convert a array declaration string into a vector
+template<class T>
+vector<T> parse_array(string str)
 {
-    int mach_code;
-    vector<int> mach_codes;
-    // Second scanning: reading instructions
-    for (ln_idx = 0; ln_idx < int(instr.size()); ln_idx++) {
-      mach_code = make(instr[ln_idx]);
-      mach_codes.push_back(mach_code);
+   int element;
+   T elem;
+   vector<T> vec;
+   stringstream ss(str);
+   bool flag = 0; // char literal
+
+   while (1)
+  {
+      auto p = ss.peek();
+      if (p == ',' || p == ' ' || p == '\t') ss.ignore();
+      else {
+          if (p == '\''){
+              flag = 1 - flag;
+              ss.ignore();
+          }
+          else{
+              if (flag){
+                  if (ss >> elem) vec.push_back(elem);
+                  else break;
+              }
+              else {
+                  if (ss >> element) vec.push_back((T)element);
+                  else break;
+              }
+          }
+      }
+}
+   return vec;}
+
+// write static data and machine codes
+void write_data_and_text(char* p = BASE) {
+  uint32_t mach_code;
+  uint32_t* text_p = (uint32_t*)p;
+  string name, type, content;
+  vector<string> instructions, data;
+
+  get_stream(f);
+  scan(f, instructions, data);
+
+  // write static data
+  for (string dat: data){
+      break_data(dat, name, type, content);
+
+      if (type == ".ascii"){
+          content = content.substr(1, content.length()-2);
+          vector<char> cvect(content.begin(), content.end());
+          store_string_at_ptr(DATA, cvect, 0); // without terminator
+      }
+
+      else if (type == ".asciiz"){
+          content = content.substr(1, content.length()-2);
+          vector<char> cvect(content.begin(), content.end());
+          store_string_at_ptr(DATA, cvect, 1); // with null terminator
+      }
+
+      else if (type == ".byte"){
+          store_at_ptr<char>(DATA, parse_array<char>(content));
+      }
+
+      else if (type == ".half"){
+          store_at_ptr<int16_t>(DATA, parse_array<int16_t>(content));
+      }
+
+      else  // ".word"
+          store_at_ptr<int32_t>(DATA, parse_array<int32_t>(content));
+
+      //print_bytes(10, (char*)addr_64(0x00500134));
+  }
+
+  // loop thru all instructions, store assembled machine codes
+  for (ln_idx = 0; ln_idx < instructions.size(); ln_idx++) {
+      mach_code = make(instructions[ln_idx]);
+      text_p[ln_idx] = mach_code;
+  }
+}
+
+void throw_trap(string info = "trapped")
+{
+    cout << '\n' << info << hex << " @ 0x" << addr_32((intptr_t)PC) << '\n';
+    throw 0;
+}
+
+bool add_overflow(int a, int b) {
+  return ((a > 0) && (b > INT_MAX - a)) || ((a < 0) && (b < INT_MIN - a));
+}
+
+void addu(int rs, int rt, int rd, int32_t* pt = (int32_t*)REG) {
+  pt[rd] = pt[rs] + pt[rt];
+}
+
+void add(int rs, int rt, int rd, int32_t* pt = (int32_t*)REG) {
+  if (add_overflow(pt[rs], pt[rt])) throw_trap();
+  addu(rs, rt, rd, pt);
+}
+
+void addiu(int rs, int rt, int16_t imm, int32_t* pt = (int32_t*)REG) {
+  pt[rt] = pt[rs] + imm;
+}
+
+void addi(int rs, int rt, int16_t imm, int32_t* pt = (int32_t*)REG) {
+  if (add_overflow(pt[rs], imm)) throw_trap();
+  addiu(rs, rt, imm, pt);
+}
+
+void AND(int rs, int rt, int rd, uint32_t* pt = REG) {
+  pt[rd] = pt[rs] & pt[rt];
+}
+
+void andi(int rs, int rt, int16_t imm, uint32_t* pt = REG) {
+  pt[rt] = pt[rs] & imm;
+}
+
+void OR(int rs, int rt, int rd, uint32_t* pt = REG) {
+    pt[rd] = pt[rs] | pt[rt];
+}
+
+void ori(int rs, int rt, int16_t imm, uint32_t* pt = REG) {
+    pt[rt] = pt[rs] | imm;
+}
+
+void nor(int rs, int rt, int rd, uint32_t* pt = REG) {
+    pt[rd] = ~(pt[rs] | pt[rt]);
+}
+
+void XOR(int rs, int rt, int rd, uint32_t* pt = REG) {
+    pt[rd] = pt[rs] ^ pt[rt];
+}
+
+void xori(int rs, int rt, int16_t imm, uint32_t* pt = REG) {
+    pt[rt] = pt[rs] ^ imm;
+}
+
+bool sub_overflow(int a, int b) {
+  return ((b > 0) && (a < INT_MIN + b)) || ((b < 0) && (a > INT_MAX + b));
+}
+
+void subu(int rs, int rt, int rd, int32_t* pt = (int32_t*)REG) {
+    pt[rd] = pt[rs] - pt[rt];
+}
+
+void sub(int rs, int rt, int rd, int32_t* pt = (int32_t*)REG) {
+  if (sub_overflow(pt[rs], pt[rt])) throw_trap();
+  subu(rs, rt, rd, pt);
+}
+
+void mult(int rs, int rt, int32_t* pt = (int32_t*)REG) {
+  uint64_t ans = pt[rs] * pt[rt];
+  int32_t high = ans >> 32;        // high-order word
+  int32_t low = ans & last(32);  // low-order word
+  pt[32] = high;
+  pt[33] = low;
+}
+
+void multu(uint32_t rs, uint32_t rt, uint32_t* pt = REG) {
+  uint64_t ans = pt[rs] * pt[rt];
+  uint32_t high = ans >> 32;        // high-order word
+  uint32_t low = ans & 0xFFFFFFFF;  // low-order word
+  pt[32] = high;
+  pt[33] = low;
+}
+
+void DIV(int rs, int rt, int32_t* pt = (int32_t*)REG) {
+  int32_t quo = pt[rs] / pt[rt];
+  int32_t rem = pt[rs] % pt[rt];
+  pt[32] = rem;
+  pt[33] = quo;
+}
+
+void divu(int rs, int rt, uint32_t* pt = REG) {
+    uint32_t quo = pt[rs] / pt[rt];
+    uint32_t rem = pt[rs] % pt[rt];
+    pt[32] = rem;
+    pt[33] = quo;
+}
+
+void mfhi(int rd, uint32_t* pt = REG) {
+  pt[rd] = pt[32];
+}
+
+void mflo(int rd, uint32_t* pt = REG) {
+    pt[rd] = pt[33];
+}
+
+void mthi(int rs, uint32_t* pt = REG) {   pt[32] = pt[rs]; }
+
+void mtlo(int rs, uint32_t* pt = REG) { pt[33] = pt[rs];}
+
+void teq(int rs, int rt, uint32_t* pt = REG) {
+  if (pt[rs] == pt[rt]) throw_trap();
+}
+
+void teqi(int rs, int16_t imm, int32_t* pt = (int32_t*)REG) {
+  if (pt[rs] == imm) throw_trap();
+}
+
+void tne(int rs, int rt, uint32_t* pt = REG) {
+  if (pt[rs] != pt[rt]) throw_trap();
+}
+
+void tnei(int rs, int16_t imm, int32_t* pt = (int32_t*)REG) {
+  if (pt[rs] != imm) throw_trap();
+}
+
+void tge(int rs, int rt, int32_t* pt = (int32_t*)REG) {
+  if (pt[rs] >= pt[rt]) throw_trap();
+}
+
+void tgeu(int rs, int rt, uint32_t* pt = REG) {
+    if (pt[rs] >= pt[rt]) throw_trap();
+}
+
+void tgei(int rs, int16_t imm, int32_t* pt = (int32_t*)REG) {
+  if (pt[rs] >= imm) throw_trap();
+}
+
+void tgeiu(int rs, uint16_t imm, uint32_t* pt = REG) {
+    if (pt[rs] >= imm) throw_trap();
+}
+
+void tlt(int rs, int rt, int32_t* pt = (int32_t*)REG) {
+  if (pt[rs] < pt[rt]) throw_trap();
+}
+
+void tltu(int rs, int rt, uint32_t* pt = REG) {
+    if (pt[rs] < pt[rt]) throw_trap();
+}
+
+void tlti(int rs, int16_t imm, int32_t* pt = (int32_t*)REG) {
+  if (pt[rs] < imm) throw_trap();
+}
+
+void tltiu(int rs, uint16_t imm, uint32_t* pt = REG) {
+    if (pt[rs] < imm) throw_trap();
+}
+
+void slt(int rs, int rt, int rd, int32_t* pt = (int32_t*)REG) {
+  pt[rd] = pt[rs] < pt[rt];
+}
+
+void sltu(int rs, int rt, int rd, uint32_t* pt = REG) {
+  pt[rd] = pt[rs] < pt[rt];
+}
+
+void slti(int rs, int rt, int16_t imm, int32_t* pt = (int32_t*)REG) {
+  pt[rt] = pt[rs] < imm;
+}
+
+void sltiu(int rs, int rt, uint16_t imm, uint32_t* pt = REG) {
+    pt[rt] = pt[rs] < imm;
+}
+
+// unconditionally jump to addr in rs
+void jr(int rs, uint32_t* pt = REG) {
+  // however PC += 1 each time, hence -1
+  PC = (uint32_t*)addr_64(pt[rs]) - 1;
+}
+
+// unconditionally jump to addr in rs, store next addr in rd
+void jalr(int rs, int rd, uint32_t* pt = REG) {
+  // however PC += 1 each time, hence -1
+  pt[rd] = addr_32((intptr_t)(PC + 1)); // link to rd
+  uint32_t* j_addr = (uint32_t*)addr_64(pt[rs]);
+  PC = j_addr - 1;
+}
+
+void j(uint32_t ln_num) {
+  uint32_t curr_ln_num = ((intptr_t)PC - (intptr_t)BASE) / 4;
+  int diff = ln_num - curr_ln_num;
+  PC += diff - 1;  // PC += 1 each time, hence -1
+}
+
+void jal(uint32_t ln_num, uint32_t* pt = REG) {
+  link(pt);
+  uint32_t curr_ln_num = ((intptr_t)PC - (intptr_t)BASE) / 4;
+  int diff = ln_num - curr_ln_num;
+  PC += diff - 1;  // PC += 1 each time, hence -1
+}
+
+void sll(int rt, int rd, uint8_t shamt, uint32_t* pt = REG) {
+  pt[rd] = pt[rt] << shamt;
+}
+
+void sllv(int rs, int rt, int rd, uint32_t* pt = REG) {
+  pt[rd] = pt[rt] << pt[rs];
+}
+
+void srl(int rt, int rd, uint8_t shamt, uint32_t* pt = REG) {
+  pt[rd] = pt[rt] >> shamt;
+}
+
+void srlv(int rs, int rt, int rd, uint32_t* pt = REG) {
+  pt[rd] = pt[rt] >> pt[rs];
+}
+
+void sra(int rt, int rd, uint8_t shamt, uint32_t* pt = REG) {
+  pt[rd] = (uint32_t)((int32_t)(pt[rt]) >> shamt);
+}
+
+void srav(int rs, int rt, int rd, uint32_t* pt = REG) {
+  pt[rd] = (uint32_t)((int32_t)(pt[rt]) >> pt[rs]);
+}
+
+void lb(int rs, int rt, int16_t imm, int32_t* pt = (int32_t*)REG) {
+  char* pchar = (char*)addr_64(pt[rs]) + imm;
+  pt[rt] = (int32_t)*pchar;
+}
+
+void lbu(int rs, int rt, int16_t imm, uint32_t* pt = REG) {
+  uint8_t* pchar = (uint8_t*)addr_64(pt[rs]) + imm;
+  pt[rt] = (uint32_t)*pchar;
+}
+
+void lh(int rs, int rt, int16_t imm, int32_t* pt = (int32_t*)REG) {
+  int16_t* phalfw = (int16_t*)((char*)addr_64(pt[rs]) + imm);
+  pt[rt] = (int32_t)*phalfw;
+}
+
+void lhu(int rs, int rt, int16_t imm, uint32_t* pt = REG) {
+  uint16_t* phalfw = (uint16_t*)((char*)addr_64(pt[rs]) + imm);
+  pt[rt] = (uint32_t)*phalfw;
+}
+
+void lw(int rs, int rt, int16_t imm, int32_t* pt = (int32_t*)REG) {
+  int32_t* pword = (int32_t*)((char*)addr_64(pt[rs]) + imm);
+  pt[rt] = *pword;
+}
+
+void lwl(int rs, int rt, int16_t imm, int32_t* pt = (int32_t*)REG) {
+  int32_t* pword = (int32_t*)((char*)addr_64(pt[rs]) + imm);
+  pt[rt] = *pword;
+}
+
+void lwr(int rs, int rt, int16_t imm, int32_t* pt = (int32_t*)REG) {
+  int32_t* pword = (int32_t*)((char*)addr_64(pt[rs]) + imm);
+  pt[rt] = *pword;
+}
+
+void ll(int rs, int rt, int16_t imm, int32_t* pt = (int32_t*)REG) {
+  lw(rs, rt, imm, pt);
+}
+
+void lui(int rt, uint16_t imm, uint32_t* pt = REG) {
+  pt[rt] = imm << 16;
+}
+
+void sb(int rs, int rt, uint16_t imm, uint32_t* pt = REG) {
+  uint8_t byte = pt[rt] & last(8);
+  uint8_t* addr = (uint8_t*)addr_64(pt[rs]) + imm;
+  *addr = byte;
+}
+
+void sh(int rs, int rt, int16_t imm, uint32_t* pt = REG) {
+    uint16_t half = pt[rt] & last(16);
+    uint16_t* addr = (uint16_t*)(addr_64(pt[rs]) + imm);
+    *addr = half;
+}
+
+void sw(int rs, int rt, int16_t imm, uint32_t* pt = REG) {
+    uint32_t* addr = (uint32_t*)(addr_64(pt[rs]) + imm);
+    *addr = pt[rt];
+}
+
+void swl(int rs, int rt, int16_t imm, uint32_t* pt = REG) {
+    uint32_t* addr = (uint32_t*)(addr_64(pt[rs]) + imm);
+    *addr = pt[rt];
+}
+
+void swr(int rs, int rt, int16_t imm, uint32_t* pt = REG) {
+    uint32_t* addr = (uint32_t*)(addr_64(pt[rs]) + imm);
+    *addr = pt[rt];
+}
+
+void sc(int rs, int rt, int16_t imm, uint32_t* pt = REG) {
+    sw(rs, rt, imm, pt);
+}
+
+void beq(int rs, int rt, int16_t imm, uint32_t* pt = REG) {
+  if (pt[rs] == pt[rt])
+    PC += imm;  // imm already considered PC++
+}
+
+void bne(int rs, int rt, int16_t imm, uint32_t* pt = REG) {
+  if (pt[rs] != pt[rt])
+    PC += imm;  // imm already considered PC++
+}
+
+void bgtz(int rs, int16_t imm, int32_t* pt = (int32_t*)REG) {
+  if (pt[rs] > 0) PC += imm;  // imm already considered PC++
+}
+
+void blez(int rs, int16_t imm, int32_t* pt = (int32_t*)REG) {
+  if (pt[rs] <= 0) PC += imm;  // imm already considered PC++
+}
+
+void bltz(int rs, int16_t imm, int32_t* pt = (int32_t*)REG) {
+  if (pt[rs] < 0) PC += imm;  // imm already considered PC++
+}
+
+void bltzal(int rs, int16_t imm, int32_t* pt = (int32_t*)REG) {
+  if (pt[rs] < 0) {
+    link((uint32_t*)pt);
+    PC += imm;  // imm already considered PC++
+  };
+}
+
+void bgez(int rs, int16_t imm, int32_t* pt = (int32_t*)REG) {
+  if (pt[rs] >= 0) PC += imm;  // imm already considered PC++
+}
+
+void bgezal(int rs, int16_t imm, int32_t* pt = (int32_t*)REG) {
+  if (pt[rs] >= 0) {
+    link((uint32_t*)pt);
+    PC += imm;  // imm already considered PC++
+  }
+}
+
+void read_int(int32_t* pt = (int32_t*)REG) {
+  string s;
+  getline(cin, s);
+  try {
+      pt[2] = stoi(s);
+  } catch (...) {
+      throw_trap("syscall exception (not an int)");
+  }
+}
+
+void read_string(uint32_t* pt = REG) {
+  string s;
+  size_t len = pt[5];  // $a1 = length, including '\n' and null byte
+  char* pchar = (char*)addr_64(pt[4]); // $a0 = buffer address
+  getline(cin, s);
+
+  if (len < 1) return;
+  if (s.length() > len - 1) throw_trap("syscall exception (string too long)");
+
+  vector<char> cvect(s.begin(), s.end());
+  store_at_ptr(pchar, cvect);
+
+  if (s.length() < len - 1) {
+      *pchar = '\n';
+      ++pchar;
+  }
+  *pchar = '\0'; // terminates with a null.
+}
+
+void print_string(uint32_t* pt = REG) {
+  char c;
+  char* pchar = (char*)addr_64(pt[4]);
+
+  while ((c = *pchar)) {
+    cout << c;
+    ++pchar;
+  }
+  cout << '\n';
+}
+
+void read_char(uint32_t* pt = REG) {
+  char c;
+  cin >> c;
+  pt[2] = (uint32_t)c;
+}
+
+vector<FILE*> streams{stdout, stdin, stderr};
+
+void open(uint32_t* pt = REG) {
+    FILE* fp;
+    char* path = (char*)addr_64(pt[4]);
+    string mode;
+
+    switch (pt[5]) {
+    case 0: mode = "r"; break;
+    case 1: mode = "w"; break;
+    case 2: mode = "r+"; break;
+    default: throw_trap("invalid mode");
+    };
+
+    try {
+        fp = fopen(path, mode.c_str());
+    } catch (...) {
+        throw_trap("file to open could not be found");
     }
-    return mach_codes;
+
+    streams.push_back(fp);
+    pt[4] = streams.size() - 1; // save fd
 }
 
-void write_text(char* text_pt = BASE)
-{
-    int* p = (int*)text_pt;
-    vector<string> instructions;
-    vector<int> codes;
-    get_stream(f);
-    scan(f, instructions);
-    codes = mips_to_machine(instructions);
-
-    for (size_t i = 0; i < codes.size(); i++){
-        p[i] = codes[i];
-    }
+void close(uint32_t* pt = REG) {
+    uint32_t fd = pt[4]; // $a0 = fd
+    FILE* fp = streams[fd];
+    fclose(fp);
 }
 
-template<class T = int>
-void set_reg_val(int idx, T val, uint32_t* pt = REG_ptr)
-{
-    *(T*)addr_64(pt[idx]) = val;
+void read(uint32_t* pt = REG){
+    FILE* fp;
+    void* buffer = (void*)addr_64(pt[5]); // $a1 = buffer
+    uint32_t fd = pt[4],  // $a0 = fd
+             len = pt[6]; // $a2 = length
+
+    fp = streams[fd];
+    pt[4] = fread(buffer, sizeof(char), len, fp); // num of chars read
 }
 
-bool add_overflow(int a, int b)
-{
-    return ((a > 0) && (b > INT_MAX - a)) || ((a < 0) && (b < INT_MIN - a));
+void write(uint32_t* pt = REG){
+    FILE* fp;
+    void* buffer = (void*)addr_64(pt[5]); // $a1 = buffer
+    uint32_t fd = pt[4], // $a0 = fd
+             len = pt[6];   // $a2 = length
+
+    fp = streams[fd];
+    pt[4] = fwrite(buffer, sizeof(char), len, fp); // num of chars written
 }
 
-void addu(int rs, int rt, int rd, uint32_t* pt = REG_ptr) {
-    set_reg_val(rd, reg_val(rs) + reg_val(rt), pt);
+void sbrk(uint32_t* pt = REG) {
+  uint32_t addr, size;
+  size = pt[4];
+  addr = addr_32((intptr_t)DATA);
+  pt[2] = addr;
+  DATA += size;
 }
 
-void add(int rs, int rt, int rd, uint32_t* pt = REG_ptr) {
-    if (add_overflow(reg_val(rs), reg_val(rt))) throw "Trapped: addition overflow!\n";
-    addu(rs, rt, rd, pt);
+void exit2(uint32_t* pt = REG) {
+  cout << dec << *((int*)(pt + 4)) << endl; // print $a0
+  throw_trap("exit");
 }
 
-void addiu(int rs, int rt, int16_t imm, uint32_t* pt = REG_ptr){
-    set_reg_val(rt, reg_val(rs) + imm, pt);
+void syscall(uint32_t* pt = REG) {
+  switch (pt[2]) {  // $v0
+    case 1:
+      //cout << "(print_int)\n";
+      cout << dec << *((int*)(pt + 4)) << '\n'; // $a0
+      break;
+    case 4:
+      //cout << "(print_string)\n";
+      print_string();
+      break;
+    case 5:
+      //cout << "(read_int)\n";
+      read_int();
+      break;
+    case 8:
+      //cout << "(read_string)\n";
+      read_string();
+      break;
+    case 9:
+      //cout << "(sbrk)\n";
+      sbrk();
+      break;
+    case 10:
+      throw_trap("exit");
+      break;
+    case 11:
+      //cout << "(print_char)\n" << endl;
+      cout << *((char*)(pt + 4)) << endl;
+      break;
+    case 12:
+      //cout << "(read_char)\n";
+      read_char();
+      break;
+    case 13:
+      //cout << "(open)\n";
+      open();
+      break;
+    case 14:
+      //cout << "(read)\n";
+      read();
+      break;
+    case 15:
+      //cout << "(write)\n";
+      write();
+      break;
+    case 16: close(); break;
+    case 17: exit2(pt); break;
+    default: throw_trap("invalid syscall");
+  }
 }
 
-void addi(int rs, int rt, int16_t imm, uint32_t* pt = REG_ptr){
-    if (add_overflow(reg_val(rs), imm)) throw "Trapped: addition overflow!\n";
-    addiu(rs, rt, imm, pt);
-}
+// executes one line of machine code
+void execute(uint32_t mach_code) {
+  //cout << "Executing: 0x" << hex << mach_code << endl;
+  uint8_t  op = mach_code >> 26, funct = mach_code & last(6),
+           shamt = (mach_code >> 6) & last(5), rd = (mach_code >> 11) & last(5),
+           rt = (mach_code >> 16) & last(5), rs = (mach_code >> 21) & last(5);
+  int16_t  imm = (int16_t)(mach_code & last(16));
+  uint32_t ln_num = mach_code & last(26);
 
-void AND(int rs, int rt, int rd, uint32_t* pt = REG_ptr) {
-    set_reg_val(rd, reg_val(rs) & reg_val(rt), pt);
-}
-
-void andi(int rs, int rt, int16_t imm, uint32_t* pt = REG_ptr) {
-    set_reg_val(rt, reg_val(rs) & imm, pt);
-}
-
-void OR(int rs, int rt, int rd, uint32_t* pt = REG_ptr) {
-    set_reg_val(rd, reg_val(rs) | reg_val(rt), pt);
-}
-
-void ori(int rs, int rt, int16_t imm, uint32_t* pt = REG_ptr) {
-    set_reg_val(rt, reg_val(rs) | imm, pt);
-}
-
-void nor(int rs, int rt, int rd, uint32_t* pt = REG_ptr) {
-    set_reg_val(rd, !(reg_val(rs) | reg_val(rt)), pt);
-}
-
-void XOR(int rs, int rt, int rd, uint32_t* pt = REG_ptr) {
-    set_reg_val(rd, reg_val(rs) xor reg_val(rt), pt);
-}
-
-void xori(int rs, int rt, int16_t imm, uint32_t* pt = REG_ptr) {
-    set_reg_val(rt, reg_val(rs) xor imm, pt);
-}
-
-bool sub_overflow(int a, int b)
-{
-    return ((b > 0) && (a < INT_MIN + b)) || ((b < 0) && (a > INT_MAX + b));
-}
-
-void subu(int rs, int rt, int rd, uint32_t* pt = REG_ptr){
-    set_reg_val(rd, reg_val(rs) - reg_val(rt), pt);
-}
-
-void sub(int rs, int rt, int rd, uint32_t* pt = REG_ptr){
-    if (sub_overflow(reg_val(rs), reg_val(rt))) throw "Trapped: subtraction overflow!\n";
-    subu(rs, rt, rd, pt);
-}
-
-bool mult_overflow(int a, int b)
-{
-    if (b >= 0) return (a > LONG_MAX / b) || (a < LONG_MIN / b);
-    return (a < LONG_MAX / b) || (a > LONG_MIN / b);
-}
-
-bool multu_overflow(uint32_t a, uint32_t b){
-    return a > ULONG_MAX / b;
-}
-
-void mult(int rs, int rt, uint32_t* pt = REG_ptr){
-    if (mult_overflow(reg_val(rs), reg_val(rt))) throw "Trapped: multiplication overflow!\n";
-    int64_t ans = (int64_t)reg_val(rs) * (int64_t)reg_val(rt);
-    int high = ans >> 32; // high-order word
-    int low = ans & 0xFFFFFFFF; // low-order word
-    set_high(high, pt);
-    set_low(low, pt);
-}
-
-void multu(uint32_t rs, uint32_t rt, uint32_t* pt = REG_ptr){
-    if (multu_overflow(reg_val<uint32_t>(rs), reg_val<uint32_t>(rt))) throw "Trapped: unsigned multiplication overflow!\n";
-    uint64_t ans = (int64_t)reg_val(rs) * (int64_t)reg_val(rt);
-    int high = ans >> 32; // high-order word
-    int low = ans & 0xFFFFFFFF; // low-order word
-    set_high(high, pt);
-    set_low(low, pt);
-}
-
-bool div_overflow(int p, int q) // p ÷ q
-{
-    return (q == 0) || (p == INT_MIN && q == -1);
-}
-
-void divu(int rs, int rt, uint32_t* pt = REG_ptr){
-    int quo = reg_val(rs, pt) / reg_val(rt, pt);
-    int rem = reg_val(rs, pt) % reg_val(rt, pt);
-    set_high(rem, pt);
-    set_low(quo, pt);
-}
-
-void div(int rs, int rt, uint32_t* pt = REG_ptr){
-    if (div_overflow(rs, rt)) throw "Trapped: division overflow!\n";
-    divu(rs, rt, pt);
-}
-
-void mfhi(int rd, uint32_t* pt = REG_ptr){
-    set_reg_val(rd, reg_val(32, pt), pt);
-}
-
-void mflo(int rd, uint32_t* pt = REG_ptr){
-    set_reg_val(rd, reg_val(33, pt), pt);
-}
-
-void mthi(int rs, uint32_t* pt = REG_ptr){
-    set_high(reg_val(rs, pt));
-}
-
-void mtlo(int rs, uint32_t* pt = REG_ptr){
-    set_low(reg_val(rs, pt));
-}
-
-void teq(int rs, int rt, uint32_t* pt = REG_ptr){
-    if (reg_val(rs, pt) == reg_val(rt, pt)) throw "Trapped!";
-}
-
-void teqi(int rs, int16_t imm, uint32_t* pt = REG_ptr){
-    if (reg_val(rs, pt) == imm) throw "Trapped!";
-}
-
-void tne(int rs, int rt, uint32_t* pt = REG_ptr){
-    if (reg_val(rs, pt) != reg_val(rt, pt)) throw "Trapped!";
-}
-
-void tnei(int rs, int16_t imm, uint32_t* pt = REG_ptr){
-    if (reg_val(rs, pt) != imm) throw "Trapped!";
-}
-
-void tge(int rs, int rt, uint32_t* pt = REG_ptr){
-    if (reg_val(rs, pt) >= reg_val(rt, pt)) throw "Trapped!";
-}
-
-void tgeu(int rs, int rt, uint32_t* pt = REG_ptr){
-    if (reg_val<uint32_t>(rs, pt) >= reg_val<uint32_t>(rt, pt)) throw "Trapped!";
-}
-
-void tgei(int rs, int16_t imm, uint32_t* pt = REG_ptr){
-    if (reg_val(rs, pt) >= imm) throw "Trapped!";
-}
-
-void tgeiu(int rs, int16_t imm, uint32_t* pt = REG_ptr){
-    if (reg_val<uint32_t>(rs, pt) >= imm) throw "Trapped!";
-}
-
-void tlt(int rs, int rt, uint32_t* pt = REG_ptr){
-    if (reg_val(rs, pt) < reg_val(rt, pt)) throw "Trapped!";
-}
-
-void tltu(int rs, int rt, uint32_t* pt = REG_ptr){
-    if (reg_val<uint32_t>(rs, pt) < reg_val<uint32_t>(rt, pt)) throw "Trapped!";
-}
-
-void tlti(int rs, int16_t imm, uint32_t* pt = REG_ptr){
-    if (reg_val(rs, pt) < imm) throw "Trapped!";
-}
-
-void tltiu(int rs, int16_t imm, uint32_t* pt = REG_ptr){
-    if (reg_val<uint32_t>(rs, pt) < imm) throw "Trapped!";
-}
-
-void slt(int rs, int rt, int rd, uint32_t* pt = REG_ptr)
-{
-    int ans = reg_val(rs, pt) < reg_val(rt, pt);
-    set_reg_val(rd, ans, pt);
-}
-
-void sltu(int rs, int rt, int rd, uint32_t* pt = REG_ptr)
-{
-    int ans = reg_val<uint32_t>(rs, pt) < reg_val<uint32_t>(rt, pt);
-    set_reg_val(rd, ans, pt);
-}
-
-void slti(int rs, int rt, int16_t imm, uint32_t* pt = REG_ptr)
-{
-    int ans = reg_val(rs, pt) < imm;
-    set_reg_val(rt, ans, pt);
-}
-
-void sltiu(int rs, int rt, int16_t imm, uint32_t* pt = REG_ptr)
-{
-    int ans = reg_val<uint32_t>(rs, pt) < imm;
-    set_reg_val(rt, ans, pt);
-}
-
-void jr(int rs, uint32_t* pt = REG_ptr)
-{   // unconditionally jump to addr in rs
-    // however PC += 1 each time, hence -1
-    PC = (uint32_t*)addr_64(pt[rs]) - 1;
-}
-
-void jalr(int rs, int rd, uint32_t* pt = REG_ptr)
-{   // unconditionally jump to addr in rs, store next addr in rd
-    // however PC += 1 each time, hence -1
-    uint32_t* addr = (uint32_t*)addr_64(pt[rs]);
-    PC = addr - 1;
-    uint32_t fake_addr = addr_32((intptr_t)(addr + 1));
-    set_reg_val(rd, fake_addr, pt);
-}
-
-void j(uint32_t ln_num)
-{
-    uint32_t curr_ln_num = 1 + ((intptr_t)PC - (intptr_t)BASE) / 4;
-    int diff = ln_num - curr_ln_num;
-    PC += diff; PC -= 1; // PC += 1 each time, hence -1
-}
-
-void jal(uint32_t ln_num)
-{
-    uint32_t curr_ln_num = 1 + ((intptr_t)PC - (intptr_t)BASE) / 4;
-    int diff = ln_num - curr_ln_num;
-    PC += diff;
-    set_reg_val<uint32_t>(31, addr_32((intptr_t)(PC + 1)));
-    PC -= 1; // PC += 1 each time, hence -1
-}
-
-void sll(int rt, int rd, uint8_t shamt, uint32_t* pt = REG_ptr){
-    pt[rd] = pt[rt] << shamt;
-}
-
-void sllv(int rs, int rt, int rd, uint32_t* pt = REG_ptr){
-    uint32_t shift = reg_val<uint32_t>(rs, pt);
-    pt[rd] = pt[rt] << shift;
-}
-
-void srl(int rt, int rd, uint8_t shamt, uint32_t* pt = REG_ptr){
-    pt[rd] = pt[rt] >> shamt;
-}
-
-void srlv(int rs, int rt, int rd, uint32_t* pt = REG_ptr){
-    uint32_t shamt = reg_val<uint32_t>(rs, pt);
-    pt[rd] = pt[rt] >> shamt;
-}
-
-void sra(int rt, int rd, uint8_t shamt, uint32_t* pt = REG_ptr){
-    pt[rd] = (uint32_t)((int32_t)(pt[rt]) >> shamt);
-}
-
-void srav(int rs, int rt, int rd, uint32_t* pt = REG_ptr){
-    uint32_t shamt = reg_val<uint32_t>(rs, pt);
-    pt[rd] = (uint32_t)((int32_t)(pt[rt]) >> shamt);
-}
-
-void execute(uint32_t mach_code, uint32_t* pt = REG_ptr)
-{
-    cout << "Executing: " << hex << mach_code << endl;
-
-    uint8_t op = mach_code >> 26,
-            funct = mach_code & last(6),
-            shamt = (mach_code >> 6) & last(5),
-            rd = (mach_code >> 11) & last(5),
-            rt = (mach_code >> 16) & last(5),
-            rs = (mach_code >> 21) & last(5);
-    int16_t imm = (int16_t)(mach_code & last(16));
-    uint32_t ln_num = mach_code & last(26);
-
-    switch (op) {
-    case 0: // R-type
-        switch (funct) {
+  switch (op) {
+    case 0:  // R-type or syscall
+      switch (funct) {
+        case 0xc:
+          syscall();
+          break;
         // rst
         case 0b100000:
-            add(rs, rt, rd, pt); break;
+          add(rs, rt, rd);
+          break;
         case 0b100001:
-            addu(rs,rt,rd, pt); break;
+          addu(rs, rt, rd);
+          break;
         case 0b100100:
-            AND(rs,rt,rd,pt); break;
+          AND(rs, rt, rd);
+          break;
         case 0b100111:
-            nor(rs,rt,rd,pt); break;
+          nor(rs, rt, rd);
+          break;
         case 0b100101:
-            OR(rs,rt,rd,pt); break;
+          OR(rs, rt, rd);
+          break;
         case 0b100010:
-            sub(rs,rt,rd,pt); break;
+          sub(rs, rt, rd);
+          break;
         case 0b100011:
-            subu(rs,rt,rd,pt); break;
+          subu(rs, rt, rd);
+          break;
         case 0b100110:
-            XOR(rs,rt,rd,pt); break;
+          XOR(rs, rt, rd);
+          break;
         case 0b101010:
-            slt(rs,rt,rd, pt); break;
+          slt(rs, rt, rd);
+          break;
         case 0b101011:
-            sltu(rs,rt,rd,pt); break;
+          sltu(rs, rt, rd);
+          break;
         // slv
         case 0b000100:
-            sllv(rs,rt,rd,pt); break;
+          sllv(rs, rt, rd);
+          break;
         case 0b000111:
-            srav(rs,rt,rd,pt); break;
+          srav(rs, rt, rd);
+          break;
         case 0b000110:
-            srlv(rs,rt,rd,pt); break;
+          srlv(rs, rt, rd);
+          break;
         // dts
         case 0b000000:
-            sll(rt,rd,shamt,pt); break;
+          sll(rt, rd, shamt);
+          break;
         case 0b000011:
-            sra(rt,rd,shamt,pt); break;
+          sra(rt, rd, shamt);
+          break;
         case 0b000010:
-            srl(rt,rd,shamt,pt); break;
+          srl(rt, rd, shamt);
+          break;
         // st
         case 0b011010:
-            div(rs,rt,pt); break;
+          DIV(rs, rt);
+          break;
         case 0b011011:
-            divu(rs,rt,pt); break;
+          divu(rs, rt);
+          break;
         case 0b011000:
-            mult(rs,rt,pt); break;
+          mult(rs, rt);
+          break;
         case 0b011001:
-            multu(rs,rt,pt); break;
+          multu(rs, rt);
+          break;
         case 0x34:
-            teq(rs,rt,pt); break;
+          teq(rs, rt);
+          break;
         case 0x36:
-            tne(rs,rt,pt); break;
+          tne(rs, rt);
+          break;
         case 0x30:
-            tge(rs,rt,pt); break;
+          tge(rs, rt);
+          break;
         case 0x31:
-            tgeu(rs,rt,pt); break;
+          tgeu(rs, rt);
+          break;
         case 0x32:
-            tlt(rs,rt,pt); break;
+          tlt(rs, rt);
+          break;
         case 0x33:
-            tltu(rs,rt,pt); break;
+          tltu(rs, rt);
+          break;
         // d
         case 0b010000:
-            mfhi(rd,pt); break;
+          mfhi(rd);
+          break;
         case 0b010010:
-            mflo(rd,pt); break;
+          mflo(rd);
+          break;
         case 0b010001:
-            mthi(rs,pt); break;
+          mthi(rs);
+          break;
         case 0b010011:
-            mtlo(rs,pt); break;
-        default: // case 0b001000
-            jr(rs,pt);
-        }
-        break;
+          mtlo(rs);
+          break;
+        default:  // case 0b001000
+          jr(rs);
+      }
+      break;
 
-    case 1: // some branch and trap
-        switch (rt) {
-        case 0b00000: bltz(rs, imm, pt); break;
-        case 0b00001: bgez(rs, imm, pt); break;
-        case 0b10000: bltzal(rs, imm, pt); break;
-        case 0b10001: bgezal(rs, imm, pt); break;
-        case 0b01000: tgei(rs, imm, pt); break;
-        case 9: tgeiu(rs, imm, pt); break;
-        case 0b01010: tlti(rs, imm, pt); break;
-        case 0b01011: tltiu(rs, imm, pt); break;
-        case 0b01100: teqi(rs, imm, pt); break;
-        default: tnei(rs, imm, pt); //case 0b01110
-        }
-        break;
+    case 1:  // some branch and trap
+      switch (rt) {
+        case 0b00000:
+          bltz(rs, imm);
+          break;
+        case 0b00001:
+          bgez(rs, imm);
+          break;
+        case 0b10000:
+          bltzal(rs, imm);
+          break;
+        case 0b10001:
+          bgezal(rs, imm);
+          break;
+        case 0b01000:
+          tgei(rs, imm);
+          break;
+        case 9:
+          tgeiu(rs, imm);
+          break;
+        case 0b01010:
+          tlti(rs, imm);
+          break;
+        case 0b01011:
+          tltiu(rs, imm);
+          break;
+        case 0b01100:
+          teqi(rs, imm);
+          break;
+        default:
+          tnei(rs, imm);  // case 0b01110
+      }
+      break;
 
     case 2:  // j
-        j(ln_num);
-        break;
+      j(ln_num);
+      break;
 
-    case 3: // jal
-        jal(ln_num);
-        break;
+    case 3:  // jal
+      jal(ln_num);
+      break;
 
-    case 0b001000: addi(rs, rt, imm, pt); break;
-    case 0b001001: addiu(rs, rt, imm, pt); break;
-    case 0b001100: andi(rs, rt, imm, pt); break;
-    case 0b001101: ori(rs, rt, imm, pt); break;
-    case 0b001110: xori(rs, rt, imm, pt); break;
-    case 0b001010: slti(rs, rt, imm, pt); break;
-    case 0b001011: sltiu(rs, rt, imm, pt); break;
+    case 0b001000:
+      addi(rs, rt, imm);
+      break;
+    case 0b001001:
+      addiu(rs, rt, imm);
+      break;
+    case 0b001100:
+      andi(rs, rt, imm);
+      break;
+    case 0b001101:
+      ori(rs, rt, imm);
+      break;
+    case 0b001110:
+      xori(rs, rt, imm);
+      break;
+    case 0b001010:
+      slti(rs, rt, imm);
+      break;
+    case 0b001011:
+      sltiu(rs, rt, imm);
+      break;
 
-    case 0b100000: lb(rt, imm, pt); break;
-    case 0b100100: lbu(rt, imm, pt); break;
-    case 0b100001: lh(rt, imm, pt); break;
-    case 0b100101: lhu(rt, imm, pt); break;
-    case 0b100011: lw(rt, imm, pt); break;
-    case 0b110001: lwc1(rt, imm, pt); break;
-    case 0x22: lwl(rt, imm, pt); break;
-    case 0x26: lwr(rt, imm, pt); break;
-    case 0x30: ll(rt, imm, pt); break;
-    case 0b101000: sb(rt, imm, pt); break;
-    case 0b101001: sh(rt, imm, pt); break;
-    case 0b101011: sw(rt, imm, pt); break;
-    case 0x2a: swl(rt, imm, pt); break;
-    case 0x2e: swr(rt, imm, pt); break;
-    case 0x38: sc(rt, imm, pt); break;
+    case 0b100000:
+      lb(rs, rt, imm);
+      break;
+    case 0b100100:
+      lbu(rs, rt, imm);
+      break;
+    case 0b100001:
+      lh(rs, rt, imm);
+      break;
+    case 0b100101:
+      lhu(rs, rt, imm);
+      break;
+    case 0b100011:
+      lw(rs, rt, imm);
+      break;
+    case 0x22:
+      lwl(rs, rt, imm);
+      break;
+    case 0x26:
+      lwr(rs, rt, imm);
+      break;
+    case 0x30:
+      ll(rs, rt, imm);
+      break;
+    case 0xf:
+      lui(rt, imm);
+      break;
+    case 0b101000:
+      sb(rs, rt, imm);
+      break;
+    case 0b101001:
+      sh(rs, rt, imm);
+      break;
+    case 0b101011:
+      sw(rs, rt, imm);
+      break;
+    case 0x2a:
+      swl(rs, rt, imm);
+      break;
+    case 0x2e:
+      swr(rs, rt, imm);
+      break;
+    case 0x38:
+      sc(rs, rt, imm);
+      break;
 
-    case 0b000100: beq(rs, rt, imm, pt); break;
-    case 0b000101: bne(rs, rt, imm, pt); break;
-    case 0b000111: bgtz(rs, imm, pt); break;
-    default: blez(rs, imm, pt); // case 0b000110
-    }
-}
-
-void print_title(string s = "-", int len = 141, char fill = '-')
-{
-    int fillw;
-    int halfLen = len / 2;
-    int halfSlen = s.length() / 2;
-    fillw = halfLen - halfSlen;
-    cout << setw(s.length() + fillw) << right << setfill(fill) << s;
-    cout << setw(fillw - 1) << setfill(fill) << fill << endl;
-}
-
-void print_bytes(int num_of_bytes, char* ptr = BASE)
-{
-    print_title("MEMORY");
-    for (int i = 0; i < num_of_bytes; i++) {
-        if (i % 32 == 0) {
-        uint32_t x = addr_32((intptr_t)ptr);
-        cout << "0x" << hex << (x + i) << "\t\t";
-        }
-        printf("%02hhX ", ptr[i]);
-        if (i % 4 == 3) cout << '\t';
-        if (i % 32 == 31) cout << '\n';
-    }
-    cout << '\n';
-    print_title();
-}
-
-// print INTEGER values at the address stored in register idx
-template<class T = int>
-void print_reg_val(int idx, uint32_t* reg_ptr = REG_ptr){
-    if (idx < 32)
-    cout << dec << REG_LIT[idx] << ": " << reg_val<T>(idx, reg_ptr);
-    else cout << dec << REG_LIT[idx] << ": " << *(T*)(reg_ptr + idx);
-}
-
-// print INTEGER values at the address stored in registers
-void print_regs_val(){
-    print_title("REG VALUES");
-    for (size_t i = 0; i < REGS.size(); i++){
-        print_reg_val(i);   // assuming integer
-        cout << '\t';
-        if (i % (REGS.size() / 2) == REGS.size() / 2 - 1) cout << '\n';
-    }
-    cout << '\n';
-    print_title("-");
-}
-
-void print_reg_saved_addr(int idx, uint32_t* &ptr = REG_ptr){
-    cout << REG_LIT[idx] << ": 0x" << hex << ptr[idx];
-}
-
-// regs saved fake (32-bit) address!!!!!
-void print_regs_saved_addr(uint32_t* &ptr = REG_ptr)
-{
-    print_title("REGISTERS");
-    for (size_t i = 0; i < REGS.size(); i++) {
-        print_reg_saved_addr(i, ptr);
-        cout << '\t';
-        if (i % 9 == 8) cout << '\n';
-    } cout << '\n'; print_title();
+    case 0b000100:
+      beq(rs, rt, imm);
+      break;
+    case 0b000101:
+      bne(rs, rt, imm);
+      break;
+    case 0b000111:
+      bgtz(rs, imm);
+      break;
+    default:
+      blez(rs, imm);  // case 0b000110
+  }
 }
 
 int main() {
+  init_reg();
+  write_data_and_text();
 
-    init_reg();
-    write_text();
-
-    ((int*)BASE)[0] = 0XFFFFFFFF;
-    ((int*)BASE)[1] = 0XFFFFFFFF;
-
-    int rs = 0, rt = 1, rd = 2;
-    REG_ptr[rs] = addr_32((intptr_t)BASE);
-    REG_ptr[rt] = REG_ptr[rs] + sizeof(int);
-    REG_ptr[rd] = REG_ptr[rt] + sizeof(int);
-    REG_ptr[32] = REG_ptr[rt] + sizeof(int);
-    REG_ptr[33] = REG_ptr[32] + sizeof(int);
-
-    print_bytes(500);
-
+  while ((curr_code = *PC)) {
     try {
-
-        add(rs, rt, rd);
-        //print_regs_val();
-
-    } catch (const char* e) {
-        cerr << e << endl;
-        return 0;
+      execute(curr_code);
+      PC += 1;  // end of cycle, PC updates
+    } catch (...) {
+      break;
     }
+    //print_regs_saved_addr();
+    //system("pause");
+  }
 
-    print_regs_saved_addr();
-    print_bytes(500);
-
-    free(REG_ptr);
-    return 0;
-
+  free(REG);
+  return 0;
 }

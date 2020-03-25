@@ -24,7 +24,7 @@ using namespace std;
  * ----------------------------------
  * Return the machine code of an R-type instruction.
  */
-int makeR(uint8_t op, uint8_t func, uint8_t rs, uint8_t rt, uint8_t rd,
+uint32_t makeR(uint8_t op, uint8_t func, uint8_t rs, uint8_t rt, uint8_t rd,
           uint8_t shamt = 0);
 
 /*
@@ -33,7 +33,7 @@ int makeR(uint8_t op, uint8_t func, uint8_t rs, uint8_t rt, uint8_t rd,
  * ----------------------------------
  * Return the machine code of an I-type instruction.
  */
-int makeI(uint8_t op, uint8_t rs, uint8_t rt, uint16_t imm);
+uint32_t makeI(uint8_t op, uint8_t rs, uint8_t rt, uint16_t imm);
 
 /*
  * Function: makeJ
@@ -41,7 +41,7 @@ int makeI(uint8_t op, uint8_t rs, uint8_t rt, uint16_t imm);
  * ----------------------------------
  * Return the machine code of a J-type instruction.
  */
-int makeJ(uint8_t op, int ln_num);
+uint32_t makeJ(uint8_t op, int ln_num);
 
 /*
  * Function: break_instr
@@ -55,12 +55,12 @@ stack<string> break_instr(string instr);
 
 /*
  * Function: make
- * Usage: int m_code = make("j 100");
+ * Usage: uint32_t m_code = make("j 100");
  * ----------------------------------
  * Returns the translated machine code of a
  * one-line instruction (already shrunk.)
  */
-int make(string instruction);
+uint32_t make(string instruction);
 
 /*
  * Function: get_label
@@ -107,13 +107,9 @@ void get_stream(ifstream &is, ofstream &os);
  */
 void scan(ifstream &is, vector<string> &instr);
 
-/*
- * Function: mips_to_machine
- * Usage: vector<int> codes = mips_to_machine(instr, ofstream);
- * ----------------------------------
- * Returns a list of machine codes corresponding to the input mips instructions
- */
-void mips_to_machine(vector<string> &instr, ofstream &os);
+// print formatted title
+void print_title(string s = "-", int len = 141, char fill = '-');
+
 
 
 #endif // MIPS_H
